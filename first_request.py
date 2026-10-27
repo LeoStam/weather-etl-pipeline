@@ -2,12 +2,18 @@ import requests
 import pandas as pd
 import logging
 
+from database import create_table, get_engine, load_data
+from pathlib import Path
+
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("logs/pipeline.log", encoding="utf-8"),
+        logging.FileHandler(LOG_DIR / "pipeline.log", encoding="utf-8"),
     ],
 )
 
@@ -79,32 +85,45 @@ def validate_data(df):
             f"Pipeline stopped."
         )
 
+def main():
+    url = "https://api.open-meteo.com/v1/forecast"
 
-url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": 37.9838,
+        "longitude": 23.7275,
+        "daily": "temperature_2m_max,wind_speed_10m_max",
+        "timezone": "Europe/Athens",
+        "forecast_days": 3,
+    }
 
-params = {
-    "latitude": 37.9838,
-    "longitude": 23.7275,
-    "daily": "temperature_2m_max,wind_speed_10m_max",
-    "timezone": "Europe/Athens",
-    "forecast_days": 3,
-}
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        logging.info("API request completed successfully.")
+    except requests.exceptions.RequestException as e:
+        logging.error("API request failed: %s", e)
+        raise SystemExit(f"Request failed: {e}")
 
-try:
-    response = requests.get(url, params=params, timeout=10)
-    response.raise_for_status()
-    logging.info("API request completed successfully.")
-except requests.exceptions.RequestException as e:
-    logging.error("API request failed: %s", e)
-    raise SystemExit(f"Request failed: {e}")
+    data = response.json()
+    daily = data["daily"]
 
-data = response.json()
-daily = data["daily"]
+    df = transform_data(daily)
 
-df = transform_data(daily)
+    validate_data(df)
+    logging.info("Data validation completed successfully.")
 
-validate_data(df)
-logging.info("Data validation completed successfully.")
+    engine = get_engine()
 
-print(response.status_code)
-print(df)
+    try:
+        create_table(engine)
+        load_data(engine, df)
+    finally:
+        engine.dispose()
+
+    logging.info("Pipeline completed successfully.")
+
+    print(response.status_code)
+    print(df)
+
+if __name__ == "__main__":
+    main()
